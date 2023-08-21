@@ -1856,6 +1856,21 @@ strategies = ["deepspeed (>=0.8.2)"]
 test = ["cloudpickle (>=1.3)", "coverage (==7.2.7)", "fastapi (<0.100.0)", "onnx (<1.15.0)", "onnxruntime (<1.16.0)", "pandas (>1.0)", "protobuf (<=3.20.1)", "psutil (<5.9.6)", "pytest (==7.4.0)", "pytest-cov (==4.1.0)", "pytest-forked (==1.4.0)", "pytest-rerunfailures (==10.3)", "scikit-learn (>0.22.1)", "tensorboard (>=2.9.1)", "uvicorn (<0.23.3)"]
 
 [[package]]
+name = "pytorch-nlp"
+version = "0.5.0"
+description = "Text utilities and datasets for PyTorch"
+optional = false
+python-versions = ">=3.5"
+files = [
+    {file = "pytorch-nlp-0.5.0.tar.gz", hash = "sha256:aba7aecbc6f0952edde8bc067394c8d43b74a35c5949d6106666d01a64d9cfab"},
+    {file = "pytorch_nlp-0.5.0-py3-none-any.whl", hash = "sha256:ddce6448819d1518d2694622573caff268a20c19832f55f7f5b672e2a64a400f"},
+]
+
+[package.dependencies]
+numpy = "*"
+tqdm = "*"
+
+[[package]]
 name = "pytz"
 version = "2023.3"
 description = "World timezone definitions, modern and historical"
@@ -2873,4 +2888,4 @@ multidict = ">=4.0"
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "783dc778f6cf41a0677c9d63316f3a644326af5c55b66ca590ee165958e28564"
+content-hash = "c132a57375f937a4795d28dbb74ea20de634547581b4bc35d4e3c0a3d0e5f201"
