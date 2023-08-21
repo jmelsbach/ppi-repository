@@ -2,6 +2,7 @@ import lightning.pytorch as pl
 
 from collections import OrderedDict
 from typing import Dict, Tuple
+from argparse import ArgumentParser
 
 import torch
 import torch.nn as nn
@@ -18,22 +19,30 @@ from transformers import BertModel, BertTokenizer, BertConfig
 from transformers.tokenization_utils_base import BatchEncoding
 from transformers.file_utils import TensorType
 
-from data import PPIDataset
-
 class StepModel(pl.LightningModule):
     """
     based on https://github.com/SCAI-BIO/STEP/blob/main/src/modeling/ProtBertPPIModel.py
     """
 
-    def __init__(self, frozen: bool) -> None:
-        """
-        Constructor for the model.
-        """
+    def __init__(self, args) -> None:
         super().__init__()
+        self.save_hyperparameters(args)
         self.model_name = "Rostlab/prot_bert_bfd"
         
-        self.dataset = PPIDataset()
+        # metrics initialization
+        self.__build_metrics
 
+        # build model
+        self.__build_model()
+
+        # Loss criterion initialization.
+        self.__build_loss()
+
+        # freeze encoder if user mants it
+        if self.hparams.nr_frozen_epochs == -1:
+            self.freeze_encoder()
+
+    def __build_metrics(self) -> None:
         self.train_metrics = MetricCollection([
             Accuracy(), 
             Precision(), 
@@ -43,7 +52,6 @@ class StepModel(pl.LightningModule):
             AUROC(pos_label=1),
             MatthewsCorrCoef(num_classes=2),
         ], prefix='train_')
-
         self.valid_metrics = MetricCollection([
             Accuracy(), 
             Precision(), 
@@ -56,22 +64,10 @@ class StepModel(pl.LightningModule):
             ROC(pos_label=1),
             MatthewsCorrCoef(num_classes=2),
         ], prefix='val_')
-
         self.test_metrics = self.valid_metrics.clone(prefix="test_")
-
-        # build model
-        self.__build_model()
-
-        # Loss criterion initialization.
-        self.__build_loss()
-
-        # freeze encoder if user mants it
-        if frozen == True:
-            self.freeze_encoder()
 
     def __build_model(self) -> None:
         """ Init BERT model + tokenizer + classification head."""
-        
         config = BertConfig.from_pretrained(self.model_name)
         config.gradient_checkpointing = True
         self.ProtBertBFD = BertModel.from_pretrained(self.model_name, config=config)
@@ -106,18 +102,15 @@ class StepModel(pl.LightningModule):
         return {"logits": result}
 
     def __build_loss(self) -> None:
-        """ Initializes the loss function/s. """
         self._loss_bce_with_integrated_sigmoid = nn.BCEWithLogitsLoss()
 
     def unfreeze_encoder(self) -> None:
-        """ un-freezes the encoder layer. """
         if self._frozen:
             for param in self.ProtBertBFD.parameters():
                 param.requires_grad = True
             self._frozen = False
 
     def freeze_encoder(self) -> None:
-        """ freezes the encoder layer. """
         for param in self.ProtBertBFD.parameters():
             param.requires_grad = False
         self._frozen = True
@@ -160,19 +153,6 @@ class StepModel(pl.LightningModule):
         return output_vector
 
     def forward(self, input_ids, token_type_ids, attention_mask):
-        """
-        Usual pytorch forward function.
-        
-        TODO: Refactor for retrieving input for both sequences
-
-        Args:
-            input_ids ([type]): token ids of input text sequences
-            token_type_ids ([type]): token type idss of input text sequences
-            attention_mask ([type]): attention mask of input test sequences.
-
-        Returns:
-            [List]: List of pooled vectors
-        """
         word_embeddings = self.ProtBertBFD(input_ids, attention_mask)[0]
 
         pooling = self.pool_strategy({
@@ -184,31 +164,9 @@ class StepModel(pl.LightningModule):
         return pooling
 
     def loss_bce_with_integrated_sigmoid(self, predictions: dict, targets: dict) -> torch.Tensor:
-        """
-        Computes Loss value according to a loss function.
-        :param predictions: model specific output. Must contain a key 'logits' with
-            a tensor [batch_size x 1] with model predictions
-        :param labels: Label values [batch_size]
-        Returns:
-            torch.tensor with loss value.
-        """
         return self._loss_bce_with_integrated_sigmoid(predictions["logits"], targets["labels"].float())
 
-    def prepare_sample_without_target(self, sample: list):
-        collated_sample = collate_tensors(sample) #type: ignore
-        inputs_A, inputs_B, _ = self.prepare_sample(sample, prepare_target = False)
-
-        return inputs_A, inputs_B, collated_sample
-
     def prepare_sample(self, sample: list, prepare_target: bool = True) -> Tuple[BatchEncoding, BatchEncoding, Dict]:
-        """
-        Function that prepares a sample to input the model.
-        :param sample: list of dictionaries.
-        
-        Returns:
-            - dictionary with the expected model inputs.
-            - dictionary with the expected target labels.
-        """
         collated_sample = collate_tensors(sample) #type: ignore
 
         inputs_A = self.tokenizer.batch_encode_plus(collated_sample["seqA"],
@@ -237,9 +195,6 @@ class StepModel(pl.LightningModule):
             print("Label encoder found an unknown label: {}", collated_sample["label"])
             raise Exception("Label encoder found an unknown label.")
 
-    def on_train_start(self) -> None:        
-        print("Training started")
-
     def __single_step(self, batch):
         inputs_A, inputs_B, targets = batch
         model_out_A = self.forward(**inputs_A)
@@ -254,18 +209,8 @@ class StepModel(pl.LightningModule):
 
         return (loss, trues, preds)
 
-    def training_step(self, batch: tuple, batch_nb: int, *args, **kwargs) -> dict:
-        """ 
-        Runs one training step. This usually consists in the forward function followed
-            by the loss function.
-        
-        :param batch: The output of your dataloader. 
-        :param batch_nb: Integer displaying which batch this is
-        Returns:
-            - dictionary containing the loss and the metrics to be added to the lightning logger.
-        """
+    def training_step(self, batch, batch_idx, *args, **kwargs) -> dict:
         train_loss, trues, preds = self.__single_step(batch)
-
         self.train_metrics.update(preds, trues)
 
         self.log('train_loss', train_loss, on_step=False, on_epoch=True)
@@ -275,9 +220,6 @@ class StepModel(pl.LightningModule):
         return output
 
     def training_epoch_end(self, outputs: list) -> None:
-        """ Function that takes as input a list of dictionaries returned by the validation_step
-        function and measures the model performance accross the entire validation set.
-        """
         result = self.train_metrics.compute()
         self.train_metrics.reset()
         
@@ -290,10 +232,6 @@ class StepModel(pl.LightningModule):
             self.unfreeze_encoder()
 
     def validation_step(self, batch: tuple, batch_nb: int, *args, **kwargs) -> dict:
-        """ Similar to the training step but with the model in eval mode.
-        Returns:
-            - dictionary passed to the validation_end function.
-        """
         val_loss, trues, preds = self.__single_step(batch)
 
         self.valid_metrics.update(preds, trues)
@@ -304,9 +242,6 @@ class StepModel(pl.LightningModule):
         return output
 
     def validation_epoch_end(self, outputs: list) -> None:
-        """ Function that takes as input a list of dictionaries returned by the validation_step
-        function and measures the model performance accross the entire validation set.
-        """
         val_loss = torch.stack([x['val_loss'] for x in outputs]).mean()
 
         result = self.valid_metrics.compute()
@@ -324,10 +259,6 @@ class StepModel(pl.LightningModule):
         self.current_val_epoch += 1
 
     def test_step(self, batch: tuple, batch_nb: int, *args, **kwargs) -> dict:
-        """ Similar to the training step but with the model in eval mode.
-        Returns:
-            - dictionary passed to the validation_end function.
-        """
         test_loss, trues, preds = self.__single_step(batch)
 
         self.test_metrics.update(preds, trues)
@@ -339,9 +270,6 @@ class StepModel(pl.LightningModule):
         return output
 
     def test_epoch_end(self, outputs: list) -> None:
-        """ Function that takes as input a list of dictionaries returned by the test_step
-        function and measures the model performance accross the entire validation set.
-        """
         test_loss = torch.stack([x['test_loss'] for x in outputs]).mean()
 
         result = self.test_metrics.compute()
@@ -371,15 +299,6 @@ class StepModel(pl.LightningModule):
         return collated_samples
 
     def predict(self, sample: dict) -> dict:
-        """
-        Predict function
-
-        Args:
-            sample (dict): dictionary with two sequences "seqA" and "seqB" we want to predict interaction for.
-
-        Returns:
-            dict: Dictionary with the sequences and the predicted probability.
-        """
         if self.training:
             self.eval()
 
@@ -417,15 +336,6 @@ class StepModel(pl.LightningModule):
         return (batches // effective_accum) * self.trainer.max_epochs
 
     def lr_lambda(self, current_step: int) -> float:
-        """
-        Calculate learning rate for current step according to the total number of training steps
-
-        Args:
-            current_step (int): Current step number
-
-        Returns:
-            [float]: learning rate lambda (how much the rate should be changed.)
-        """
         num_warmup_steps = self.hparams.warmup_steps
         if current_step < num_warmup_steps:
             return float(current_step) / float(max(1, num_warmup_steps))
@@ -434,11 +344,6 @@ class StepModel(pl.LightningModule):
         )
 
     def configure_optimizers(self):
-        """
-        Confiugre the optimizers and schedulears.
-
-        It also sets different learning rates for different parameter groups. 
-        """
         no_decay_params = ["bias", "LayerNorm.weight"]
         optimizer_grouped_parameters = [
             {
@@ -476,61 +381,14 @@ class StepModel(pl.LightningModule):
 
         return [optimizer], [scheduler_dict]
 
-     
-    
-    def train_dataloader(self) -> DataLoader:
-        """TODO Function that loads the train set. """
-        self._train_dataset = self.__retrieve_dataset(train=True)
-        return DataLoader(
-            dataset=self._train_dataset,
-            sampler=RandomSampler(self._train_dataset),
-            batch_size=self.hparams.per_device_train_batch_size,
-            collate_fn=self.prepare_sample,
-            num_workers=self.hparams.loader_workers,
-        )
 
-    def val_dataloader(self) -> DataLoader:
-        """TODO Function that loads the validation set."""
-        self._dev_dataset = self.__retrieve_dataset(val=True)
-        return DataLoader(
-            dataset=self._dev_dataset,
-            batch_size=self.hparams.per_device_eval_batch_size,
-            collate_fn=self.prepare_sample,
-            num_workers=self.hparams.loader_workers,
-        )
-
-    def test_dataloader(self) -> DataLoader:
-        """TODO Function that loads the test set. """
-        self._test_dataset = self.__retrieve_dataset(test=True)
-        return DataLoader(
-            dataset=self._test_dataset,
-            batch_size=self.hparams.per_device_test_batch_size,
-            collate_fn=self.prepare_sample,
-            num_workers=self.hparams.loader_workers,
-        )
-
-'''
     @staticmethod
-    def add_model_specific_args(parent_parser: ArgumentParser) -> ProtBertPPIArgParser:
-        """ Parser for Estimator specific arguments/hyperparameters. 
-        :param parser: HyperOptArgumentParser obj
-        Returns:
-            - updated parser
-        """
-
-        parser = ProtBertPPIArgParser(
-            strategy="random_search",
-            description="Minimalist ProtBERT Classifier",
-            add_help=False,
-            parents=[parent_parser],
-            formatter_class=SortingHelpFormatter
-        )
-        parser.opt_list(
+    def add_model_specific_args(parent_parser: ArgumentParser):
+        parser = parent_parser.add_argument_group("Model")
+        parser.add_argument(
             "--adam_epsilon",
             default=1e-08,
             type=float,
-            tunable=True,
-            options=[1e-06, 1e-07, 1e-08, 1e-09],
             help="adam_epsilon"
         )
         parser.add_argument(
@@ -575,20 +433,16 @@ class StepModel(pl.LightningModule):
             type=float,
             help="Encoder specific learning rate.",
         )
-        parser.opt_list(
+        parser.add_argument(
             "--learning_rate",
             default=3e-05,
             type=float,
-            options=[1e-05, 3e-05, 5e-05, 1e-04, 3e-04, 5e-04, 1e-03, 3e-03, 5e-03],
-            tunable=True,
             help="Classification head learning rate.",
         )
-        parser.opt_list(
+        parser.add_argument(
             "--weight_decay",
             default=1e-2,
             type=float,
-            options=[1e-1, 1e-2, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7, 1e-8, 1e-9],
-            tunable=True,
             help="Weight decay for AdamW.",
         )
         parser.add_argument(
@@ -597,21 +451,17 @@ class StepModel(pl.LightningModule):
             type=int,
             help="Warm up steps for learning rate schedular.",
         )
-        parser.opt_list(
+        parser.add_argument(
             "--dropout_prob",
             default=0.5,
-            tunable=True,
-            options=[0.2,0.3, 0.4, 0.5],
             type=float,
             help="Classification head dropout probability.",
         )
-        parser.opt_list(
+        parser.add_argument(
             "--nr_frozen_epochs",
             default=1,
             type=int,
             help="Number of epochs we want to keep the encoder model frozen.",
-            tunable=True,
-            options=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
         )
         parser.add_argument(
             "--gradient_checkpointing",
@@ -620,45 +470,5 @@ class StepModel(pl.LightningModule):
             help="Enable or disable gradient checkpointing which use the cpu memory \
                 with the gpu memory to store the model.",
         )
-        # Data Args:
-        parser2 = parser.add_argument_group("Data options")
-        parser2.add_argument(
-            "--label_set",
-            default="1,0",
-            type=str,
-            help="Classification labels set.",
-        )
-        parser2.add_argument(
-            "--train_csv",
-            default=settings.BASE_DATA_DIR + "/generated/vp1/ml/train.txt",
-            type=str,
-            help="Path to the file containing the train data.",
-        )
-        parser2.add_argument(
-            "--valid_csv",
-            default=settings.BASE_DATA_DIR + "/generated/vp1/ml/valid.txt",
-            type=str,
-            help="Path to the file containing the valid data.",
-        )
-        parser2.add_argument(
-            "--test_csv",
-            default=settings.BASE_DATA_DIR + "/generated/vp1/ml/test.txt",
-            type=str,
-            help="Path to the file containing the test data.",
-        )
-        parser2.add_argument(
-            "--predict_csv",
-            default=settings.BASE_DATA_DIR + "/generated/vp1/ml/predict_vp1.txt",
-            type=str,
-            help="Path to the file containing the inferencing data.",
-        )
-        parser2.add_argument(
-            "--loader_workers",
-            default=8,
-            type=int,
-            help="How many subprocesses to use for data loading. 0 means that \
-                the data will be loaded in the main process.",
-        )
 
         return parser
-'''
