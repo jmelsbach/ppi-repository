@@ -4,7 +4,7 @@ from ppi.models.contrastive_ppi import ContrastivePPI
 from lightning.pytorch import Trainer
 import lightning.pytorch as pl
 
-datamodule = ContrastiveDataModule(data_path="data/madan", batch_size=4)
+datamodule = ContrastiveDataModule(data_path="data/madan", batch_size=256)
 model = ContrastivePPI(base_model="Rostlab/prot_bert")
 trainer = Trainer()
 trainer.fit(model, datamodule)
