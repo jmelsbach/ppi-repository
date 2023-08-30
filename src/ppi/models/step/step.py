@@ -48,6 +48,9 @@ class StepModel(pl.LightningModule):
         # freeze encoder if user mants it
         if self.hparams.nr_frozen_epochs == -1:
             self.freeze_encoder()
+            self._frozen = True
+        else:
+            self._frozen = False
 
     def __build_metrics(self) -> None:
         self.train_metrics = MetricCollection(
@@ -236,7 +239,7 @@ class StepModel(pl.LightningModule):
         )
         return train_loss
 
-    def on_train_epoch_end(self, outputs: list) -> None:
+    def on_train_epoch_end(self) -> None:
         # result = self.train_metrics.compute()
         # self.train_metrics.reset()
 
@@ -278,22 +281,6 @@ class StepModel(pl.LightningModule):
         )
 
         return output
-
-    def on_test_epoch_end(self, outputs: list) -> None:
-        test_loss = torch.stack([x["test_loss"] for x in outputs]).mean()
-
-        # result = self.test_metrics.compute()
-        # self.test_metrics.reset()
-
-        self.log("test_loss", test_loss, on_epoch=True, prog_bar=True)
-
-        # do not log ROC and PRC
-        # result.pop(self.test_metrics.prefix + 'ROC', None)
-        # result.pop(self.test_metrics.prefix + 'PrecisionRecallCurve', None)
-        # result.pop(self.test_metrics.prefix + 'ConfusionMatrix', torch.Tensor([[-1,-1],[-1,-1]]))
-        # self.log_dict(result, on_epoch=True)
-
-        self.current_test_epoch += 1
 
     @property
     def num_training_steps(self) -> int:
