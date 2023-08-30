@@ -27,8 +27,6 @@ class PPIDataset(Dataset):
             sequence_a = re.sub(r"[UZOB]", "X", sequence_a)
             sequence_b = re.sub(r"[UZOB]", "X", sequence_b)
 
-
-
         inputs_a = self.tokenizer(
             sequence_a,
             max_length=self.max_length,
@@ -36,7 +34,7 @@ class PPIDataset(Dataset):
             truncation=True,
             return_tensors="pt",
         )
-
+        
         inputs_b = self.tokenizer(
             sequence_b,
             max_length=self.max_length,
@@ -44,6 +42,7 @@ class PPIDataset(Dataset):
             truncation=True,
             return_tensors="pt",
         )
+
         if self.return_labels:
             return (inputs_a, inputs_b, label)
         else:
