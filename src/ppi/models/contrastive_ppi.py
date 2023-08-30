@@ -1,5 +1,7 @@
+from collections import OrderedDict
 from typing import Any
 import lightning.pytorch as pl
+from torchmetrics import Accuracy
 from torch import nn
 from transformers import (
     AutoModel,
@@ -17,6 +19,11 @@ class ContrastivePPI(pl.LightningModule):
         super().__init__()
         self.save_hyperparameters()
 
+        self.acc = Accuracy(task="binary")
+
+
+        self.temperature = nn.Parameter(torch.randn(1), requires_grad=True).to(self.device)
+
         if base_model == "t5-base":
             self.encoder = ContrastiveT5(base_model)
         elif base_model == "Rostlab/prot_bert":
@@ -27,9 +34,9 @@ class ContrastivePPI(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         a, b = batch
         bs = a["input_ids"].size(0)
-        logits_a = self.encoder(a)
-        logits_b = self.encoder(b)
-        distance_matrix = calculate_distance(logits_a, logits_b, "inner_product")
+        embeddings_a = self.encoder(a)
+        embeddings_b = self.encoder(b)
+        distance_matrix = calculate_distance(embeddings_a, embeddings_b, "cosine") * torch.exp(self.temperature)
         loss = nn.CrossEntropyLoss()(
             distance_matrix, torch.arange(bs, dtype=torch.long).to(self.device)
         )
@@ -38,13 +45,16 @@ class ContrastivePPI(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         a, b, labels = batch
-        logits_a = self.encoder(a)
-        logits_b = self.encoder(b)
-        distance_matrix = calculate_distance(logits_a, logits_b, "cosine")
-        preds = torch.diagonal(distance_matrix, 0)
+        embeddings_a = self.encoder(a)
+        embeddings_b = self.encoder(b)
+        inner_product = torch.sum(embeddings_a * embeddings_b, dim=1)
+        preds = torch.sigmoid(inner_product)
+        acc = self.acc(preds, labels)
+        self.log("val_acc", acc, prog_bar=True)
+
 
     def configure_optimizers(self):
-        return AdamW(self.encoder.parameters(), lr=1e-5)
+        return AdamW(self.parameters(), lr=1e-5)
 
     def test_step(self, batch, batch_idx):
         a, b, labels = batch
@@ -65,8 +75,10 @@ class ContrastiveT5(nn.Module):
         self.head = ContrastiveHead(self.config.hidden_size, 1)
 
     def forward(self, x):
-        model_output = self.model(**x)
-        embedding = self._pool(model_output, x["attention_mask"])
+        input_ids = x["input_ids"].squeeze(1)
+        attention_mask = x["attention_mask"].squeeze(1)
+        model_output = self.model(input_ids, attention_mask)
+        embedding = self._pool(model_output, attention_mask)
         return self.head(embedding)
 
     def encode(self, x: str):
@@ -92,8 +104,17 @@ class ContrastiveProtBert(nn.Module):
         self.model = AutoModel.from_pretrained(base_model)
         self.tokenizer = AutoTokenizer.from_pretrained(base_model)
         self.config = AutoConfig.from_pretrained(base_model)
-        self.head = ContrastiveHead(self.config.hidden_size, 1)
-        self._freeze_encoder()
+        #self.head = ContrastiveHead(self.config.hidden_size, 1)
+
+        self.embedding_dim = self.config.hidden_size
+        self.hidden_dim = 512
+        self.head = nn.Sequential(OrderedDict([
+            ('fc1', nn.Linear(in_features=self.embedding_dim, out_features=self.hidden_dim//2)),
+            ('relu', nn.ReLU()),
+            ("dropout", nn.Dropout(0.1)),
+            ('fc2', nn.Linear(in_features=self.hidden_dim//2, out_features=self.hidden_dim//4)),
+        ]))
+        #self._freeze_encoder()
 
     def forward(self, x):
         input_ids = x["input_ids"].squeeze(1)
