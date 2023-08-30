@@ -10,15 +10,15 @@ class BaseDataModule(LightningDataModule):
     def __init__(
         self,
         data_path: str,
-        batch_size: int = 32,
+        batch_size: int = 256,
         num_workers: int = 8,
         base_model: str = "Rostlab/prot_bert",
     ):
         super().__init__()
         self.batch_size = batch_size
         self.num_workers = num_workers
-        self.tokenizer = AutoTokenizer.from_pretrained(base_model)
         self.data_path = Path(data_path)
+        self.base_model = base_model
 
     def setup(self, stage: str = None):
         train_df = pd.read_csv(self.data_path / "train.txt", delimiter="\t")
@@ -26,23 +26,23 @@ class BaseDataModule(LightningDataModule):
         test_df = pd.read_csv(self.data_path / "test.txt", delimiter="\t")
 
         self.train_dataset = PPIDataset(
-            train_df, self.tokenizer, max_length=512, return_labels=True
+            train_df, self.base_model, max_length=512, return_labels=True
         )
         self.val_dataset = PPIDataset(
-            val_df, self.tokenizer, max_length=512, return_labels=True
+            val_df, self.base_model, max_length=512, return_labels=True
         )
         self.test_dataset = PPIDataset(
-            test_df, self.tokenizer, max_length=512, return_labels=True
+            test_df, self.base_model ,max_length=512, return_labels=True
         )
 
     def train_dataloader(self):
         return DataLoader(
-            self.train_dataset, batch_size=self.batch_size, num_workers=self.num_workers
+            self.train_dataset, batch_size=self.batch_size, num_workers=self.num_workers, shuffle=True
         )
 
     def val_dataloader(self):
         return DataLoader(
-            self.val_dataset, batch_size=self.batch_size, num_workers=self.num_workers
+            self.val_dataset, batch_size=self.batch_size, num_workers=self.num_workers, shuffle=True
         )
 
     def test_dataloader(self):
