@@ -1,7 +1,7 @@
+from lightning.pytorch import Trainer
+
 from ppi.data.datamodule import BaseDataModule
 from ppi.models.step.step import StepModel
-from lightning.pytorch import Trainer
-from argparse import ArgumentParser
 
 if __name__ == "__main__":
     # you might need to change the data path
@@ -9,10 +9,6 @@ if __name__ == "__main__":
         data_path="data/madan/", batch_size=8, base_model="Rostlab/prot_bert_bfd"
     )
 
-    parser = ArgumentParser()
-    StepModel.add_model_specific_args(parser)
-    args = parser.parse_args(args=[])
-
-    model = StepModel(args)
-    trainer = Trainer()
+    model = StepModel()
+    trainer = Trainer(precision='16-mixed', limit_train_batches=0.1, limit_val_batches=0.2, limit_test_batches=0.3, accelerator='mps')
     trainer.fit(model, datamodule)
