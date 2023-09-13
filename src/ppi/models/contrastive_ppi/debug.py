@@ -1,6 +1,6 @@
 # Contrastive PPI
 from ppi.data.datamodule import ContrastiveDataModule
-from ppi.models.contrastive_ppi import ContrastivePPI
+from ppi.models.contrastive_ppi.contrastive_ppi import ContrastivePPI
 from lightning.pytorch import Trainer
 import lightning.pytorch as pl
 
