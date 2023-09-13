@@ -84,8 +84,14 @@ class StepModel(pl.LightningModule):
         self.valid_acc(preds, y)
         self.valid_auroc(preds, y)
         self.log("val_loss", loss, on_epoch=True, prog_bar=True)
-        self.log("valid_acc", self.valid_acc, on_epoch=True, prog_bar=True)
-        self.log("valid_auroc", self.valid_auroc, on_epoch=True, prog_bar=True)
+
+    def on_validation_epoch_end(self) -> None:
+        acc = self.valid_acc.compute()
+        auroc = self.valid_auroc.compute()
+        self.log("valid_acc", acc, on_epoch=True, prog_bar=True)
+        self.log("valid_auroc", auroc, on_epoch=True, prog_bar=True)
+        self.valid_acc.reset()
+        self.valid_auroc.reset()
 
     def configure_optimizers(self):
         optimizer = optim.Adam(self.parameters(), lr=1e-4)

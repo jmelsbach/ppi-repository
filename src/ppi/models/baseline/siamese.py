@@ -134,7 +134,11 @@ class SiameseBaseLineModelv2(pl.LightningModule):
 
         self.valid_acc(y_hat, y)
         self.log("val_loss", loss, on_epoch=True, prog_bar=True)
-        self.log("valid_acc", self.valid_acc, on_epoch=True, prog_bar=True)
+
+    def on_validation_epoch_end(self) -> None:
+        acc = self.valid_acc.compute()
+        self.log("valid_acc", acc, on_epoch=True, prog_bar=True)
+        self.valid_acc.reset()
 
     def configure_optimizers(self):
         optimizer = optim.Adam(self.parameters(), lr=1e-4)
