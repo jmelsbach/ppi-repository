@@ -32,17 +32,23 @@ class BaseDataModule(LightningDataModule):
             val_df, self.base_model, max_length=512, return_labels=True
         )
         self.test_dataset = PPIDataset(
-            test_df, self.base_model ,max_length=512, return_labels=True
+            test_df, self.base_model, max_length=512, return_labels=True
         )
 
     def train_dataloader(self):
         return DataLoader(
-            self.train_dataset, batch_size=self.batch_size, num_workers=self.num_workers, shuffle=True
+            self.train_dataset,
+            batch_size=self.batch_size,
+            num_workers=self.num_workers,
+            shuffle=True,
         )
 
     def val_dataloader(self):
         return DataLoader(
-            self.val_dataset, batch_size=self.batch_size, num_workers=self.num_workers, shuffle=True
+            self.val_dataset,
+            batch_size=self.batch_size,
+            num_workers=self.num_workers,
+            shuffle=False,
         )
 
     def test_dataloader(self):
@@ -58,6 +64,7 @@ class ContrastiveDataModule(BaseDataModule):
         batch_size: int = 32,
         num_workers: int = 8,
         base_model: str = "Rostlab/prot_bert",
+        max_length: int = 1024,
     ):
         super().__init__(
             data_path=data_path,
@@ -65,6 +72,9 @@ class ContrastiveDataModule(BaseDataModule):
             num_workers=num_workers,
             base_model=base_model,
         )
+
+        self.tokenizer = AutoTokenizer.from_pretrained(base_model)
+        self.max_length = max_length
 
     def setup(self, stage: str = None):
         train_df = pd.read_csv(self.data_path / "train.txt", delimiter="\t")
@@ -74,11 +84,11 @@ class ContrastiveDataModule(BaseDataModule):
         train_df = train_df[train_df["class"] == 1]
 
         self.train_dataset = PPIDataset(
-            train_df, self.tokenizer, max_length=512, return_labels=False
+            train_df, self.base_model, max_length=self.max_length, return_labels=False
         )
         self.val_dataset = PPIDataset(
-            val_df, self.tokenizer, max_length=512, return_labels=True
+            val_df, self.base_model, max_length=self.max_length, return_labels=True
         )
         self.test_dataset = PPIDataset(
-            test_df, self.tokenizer, max_length=512, return_labels=True
+            test_df, self.base_model, max_length=self.max_length, return_labels=True
         )
